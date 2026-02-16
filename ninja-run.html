@@ -152,8 +152,18 @@ class Ninja {
     ctx.fillRect(x - s/2 + 3, y - s - s*0.35, s - 4, 4);
 
     // eye dots
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(x + 2, y - s - s*0.35, 4, 4);
+    if (this.dead) {
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 1.5;
+      const ex = x + 4, ey = y - s - s*0.33;
+      ctx.beginPath();
+      ctx.moveTo(ex - 2, ey - 2); ctx.lineTo(ex + 2, ey + 2);
+      ctx.moveTo(ex + 2, ey - 2); ctx.lineTo(ex - 2, ey + 2);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(x + 2, y - s - s*0.35, 4, 4);
+    }
 
     // headband tail
     ctx.strokeStyle = col;
@@ -192,7 +202,7 @@ class Obstacle {
     this.type = type; // 'block' or 'gap'
     this.worldX = worldX;
     if (type === 'block') {
-      this.w = 20 + Math.random() * 15;
+      this.w = Math.ceil((20 + Math.random() * 15) / 8) * 8;
       this.h = 25 + Math.random() * 20;
     } else {
       this.w = 50 + Math.random() * 40;
