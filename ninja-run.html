@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ninja Duo Run</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #4a6fa5; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: monospace; }
+  canvas { border: 2px solid #333; }
+  #ui { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 18px; text-align: center; }
+  #overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #fff; text-align: center; display: none; }
+  #overlay h1 { font-size: 48px; margin-bottom: 10px; }
+  #overlay p { font-size: 20px; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <span id="score">Distance: 0</span>
+</div>
+<canvas id="c"></canvas>
+<div id="overlay">
+  <h1 id="overTitle">NINJA DUO RUN</h1>
+  <p id="overMsg">&rarr; = Red ninja jump &nbsp; | &nbsp; &larr; = Blue ninja jump</p>
+  <p style="font-size:14px; color:#ccc;" id="overMsg2">Tap/click left half = Blue &nbsp; | &nbsp; right half = Red</p>
+  <p style="font-size:16px; color:#aaa;" id="overSub">Press SPACE or tap to start</p>
+</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 800, H = 400;
+canvas.width = W; canvas.height = H;
+
+const GRAVITY = 0.6;
+const JUMP_FORCE = -12;
+const BASE_SPEED = 4;
+const GROUND_Y = H - 80;
+const NINJA_SIZE = 28;
+const MIN_OBSTACLE_GAP = 220;
+const MAX_OBSTACLE_GAP = 400;
+
+// Red ninja (front) x position, blue ninja (back) x position
+const RED_X = 200;
+const BLUE_X = 80;
+
+let gameState = 'menu';
+let distance = 0;
+let speed = BASE_SPEED;
+let animFrame = 0;
+let highScore = parseInt(localStorage.getItem('ninjaRunHighScore')) || 0;
+
+const overlay = document.getElementById('overlay');
+const overTitle = document.getElementById('overTitle');
+const overMsg = document.getElementById('overMsg');
+const overSub = document.getElementById('overSub');
+const scoreEl = document.getElementById('score');
+
+overlay.style.display = 'block';
+
+class Ninja {
+  constructor(screenX, color) {
+    this.color = color;
+    this.x = screenX;
+    this.groundY = GROUND_Y + NINJA_SIZE/2;
+    this.y = this.groundY;
+    this.vy = 0;
+    this.onGround = true;
+    this.alive = true;
+    this.dead = false;
+    this.offScreen = false;
+    this.falling = false;
+    this.runFrame = 0;
+    this.jumpsLeft = 0;
+  }
+
+  die() {
+    if (this.dead) return;
+    this.dead = true;
+    this.alive = false;
+    this.vy = -8;
+    this.vx = -3;
+  }
+
+  jump() {
+    if (!this.alive) return;
+    if (this.onGround) {
+      this.vy = JUMP_FORCE;
+      this.onGround = false;
+      this.jumpsLeft = 1;
+    } else if (this.jumpsLeft > 0) {
+      this.vy = JUMP_FORCE;
+      this.jumpsLeft = 0;
+    }
+  }
+
+  update(gapUnderFoot) {
+    if (this.dead) {
+      this.vy += GRAVITY;
+      this.y += this.vy;
+      this.x += this.vx || 0;
+      if (this.y > H + 100) this.offScreen = true;
+      return;
+    }
+    this.vy += GRAVITY;
+    this.y += this.vy;
+
+    // Mark as falling when dropping below ground in a gap
+    if (gapUnderFoot && this.y >= this.groundY) {
+      this.falling = true;
+    }
+
+    // A jump resets the falling state — ninja can save themselves
+    if (this.falling && this.vy < 0) {
+      this.falling = false;
+    }
+
+    // Only land on ground if not falling through a gap
+    if (this.y >= this.groundY && !this.falling) {
+      this.y = this.groundY;
+      this.vy = 0;
+      this.onGround = true;
+    }
+
+    // Fell off screen
+    if (this.y > H + 50) {
+      this.die();
+    }
+
+    this.runFrame += 0.15;
+  }
+
+  draw() {
+    if (this.offScreen) return;
+    const x = this.x, y = this.y;
+    const s = NINJA_SIZE;
+    const rf = this.dead ? 0 : Math.sin(this.runFrame * 6);
+    const col = this.dead ? '#888' : this.color;
+
+    ctx.save();
+    if (this.dead) {
+      ctx.globalAlpha = 0.8;
+    }
+    // body
+    ctx.fillStyle = col;
+    ctx.fillRect(x - s/2, y - s, s, s);
+
+    // head
+    ctx.fillStyle = '#222';
+    ctx.fillRect(x - s/2 - 1, y - s - s*0.55, s + 2, s * 0.55);
+
+    // eyes (headband slit)
+    ctx.fillStyle = col;
+    ctx.fillRect(x - s/2 + 3, y - s - s*0.35, s - 4, 4);
+
+    // eye dots
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(x + 2, y - s - s*0.35, 4, 4);
+
+    // headband tail
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x - s/2 - 1, y - s - s*0.25);
+    ctx.lineTo(x - s/2 - 12 + Math.sin(this.runFrame * 4) * 3, y - s - s*0.4 + Math.cos(this.runFrame * 3) * 2);
+    ctx.stroke();
+
+    // legs
+    ctx.fillStyle = '#222';
+    if (this.onGround) {
+      ctx.fillRect(x - s/4 + rf * 5, y, 5, 10);
+      ctx.fillRect(x + s/4 - 5 - rf * 5, y, 5, 10);
+    } else {
+      ctx.fillRect(x - s/4, y - 4, 5, 6);
+      ctx.fillRect(x + s/4 - 5, y - 4, 5, 6);
+    }
+
+    // arms
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 3;
+    const armAngle = this.onGround ? rf * 0.5 : -0.7;
+    ctx.beginPath();
+    ctx.moveTo(x + s/2, y - s * 0.6);
+    ctx.lineTo(x + s/2 + 12, y - s * 0.6 + Math.sin(armAngle) * 8);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
+// Obstacles exist in "world space" and scroll left
+class Obstacle {
+  constructor(type, worldX) {
+    this.type = type; // 'block' or 'gap'
+    this.worldX = worldX;
+    if (type === 'block') {
+      this.w = 20 + Math.random() * 15;
+      this.h = 25 + Math.random() * 20;
+    } else {
+      this.w = 50 + Math.random() * 40;
+      this.h = 0;
+    }
+  }
+
+  // Screen x based on current scroll
+  screenX() {
+    return this.worldX - worldScroll;
+  }
+
+  draw() {
+    const sx = this.screenX();
+    if (sx + this.w < -50 || sx > W + 50) return;
+
+    if (this.type === 'block') {
+      const topY = GROUND_Y - this.h + NINJA_SIZE/2 + 10;
+      ctx.fillStyle = '#c0392b';
+      ctx.fillRect(sx, topY, this.w, this.h);
+      ctx.fillStyle = '#e74c3c';
+      for (let i = 0; i < this.w; i += 8) {
+        ctx.beginPath();
+        ctx.moveTo(sx + i, topY);
+        ctx.lineTo(sx + i + 4, topY - 8);
+        ctx.lineTo(sx + i + 8, topY);
+        ctx.fill();
+      }
+    }
+  }
+
+  collidesBlock(ninja) {
+    if (this.type !== 'block') return false;
+    const sx = this.screenX();
+    const nx = ninja.x, ny = ninja.y;
+    const ns = NINJA_SIZE;
+    const topY = GROUND_Y - this.h + ns/2 + 10;
+    return nx + ns/2 > sx && nx - ns/2 < sx + this.w &&
+           ny > topY && ny - ns < topY + this.h;
+  }
+
+  isGapUnder(ninja) {
+    if (this.type !== 'gap') return false;
+    const sx = this.screenX();
+    const nx = ninja.x;
+    const ns = NINJA_SIZE;
+    return nx + ns/3 > sx && nx - ns/3 < sx + this.w;
+  }
+}
+
+let redNinja, blueNinja;
+let obstacles = [];
+let nextObstacleWorldX = 0;
+let worldScroll = 0;
+
+function init() {
+  distance = 0;
+  speed = BASE_SPEED;
+  animFrame = 0;
+  worldScroll = 0;
+  redNinja = new Ninja(RED_X, '#e74c3c');
+  blueNinja = new Ninja(BLUE_X, '#3498db');
+  obstacles = [];
+  nextObstacleWorldX = 400;
+}
+
+function spawnObstacles() {
+  // Spawn obstacles ahead of view in world space
+  const worldRight = worldScroll + W + 300;
+  while (nextObstacleWorldX < worldRight) {
+    const type = Math.random() < 0.45 ? 'gap' : 'block';
+    obstacles.push(new Obstacle(type, nextObstacleWorldX));
+    nextObstacleWorldX += MIN_OBSTACLE_GAP + Math.random() * (MAX_OBSTACLE_GAP - MIN_OBSTACLE_GAP);
+  }
+}
+
+function isOverGap(ninja) {
+  for (const o of obstacles) {
+    if (o.isGapUnder(ninja)) return true;
+  }
+  return false;
+}
+
+function hitsBlock(ninja) {
+  for (const o of obstacles) {
+    if (o.collidesBlock(ninja)) return true;
+  }
+  return false;
+}
+
+function drawGround() {
+  const gy = GROUND_Y + NINJA_SIZE/2 + 10;
+
+  // Collect on-screen gaps
+  const gaps = obstacles
+    .filter(o => o.type === 'gap')
+    .map(o => ({ x: o.screenX(), w: o.w }))
+    .filter(g => g.x + g.w > 0 && g.x < W)
+    .sort((a, b) => a.x - b.x);
+
+  // Draw ground with gaps cut out
+  ctx.fillStyle = '#2e4a30';
+  let prevEnd = 0;
+  for (const gap of gaps) {
+    const gx = Math.max(gap.x, 0);
+    if (gx > prevEnd) {
+      ctx.fillRect(prevEnd, gy, gx - prevEnd, H - gy);
+    }
+    prevEnd = Math.min(gap.x + gap.w, W);
+  }
+  if (prevEnd < W) {
+    ctx.fillRect(prevEnd, gy, W - prevEnd, H - gy);
+  }
+
+  // Ground top edge line
+  ctx.strokeStyle = '#ffffff55';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  let drawing = false;
+  for (let x = 0; x < W; x++) {
+    let inGap = false;
+    for (const g of gaps) {
+      if (x >= g.x && x <= g.x + g.w) { inGap = true; break; }
+    }
+    if (!inGap) {
+      if (!drawing) { ctx.moveTo(x, gy); drawing = true; }
+      else ctx.lineTo(x, gy);
+    } else {
+      drawing = false;
+    }
+  }
+  ctx.stroke();
+}
+
+function drawBackground() {
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#5b86c5');
+  grad.addColorStop(0.5, '#4a6fa5');
+  grad.addColorStop(1, '#3a5a8a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // parallax mountains
+  ctx.fillStyle = '#3a5a8a';
+  for (let i = 0; i < 6; i++) {
+    const mx = ((i * 180) - (worldScroll * 0.1) % (180 * 6) + 180 * 6) % (180 * 6) - 90;
+    ctx.beginPath();
+    ctx.moveTo(mx, GROUND_Y + NINJA_SIZE/2 + 10);
+    ctx.lineTo(mx + 90, GROUND_Y - 80 - (i % 3) * 30);
+    ctx.lineTo(mx + 180, GROUND_Y + NINJA_SIZE/2 + 10);
+    ctx.fill();
+  }
+
+  // clouds
+  ctx.fillStyle = '#ffffff33';
+  for (let i = 0; i < 8; i++) {
+    const cx = ((i * 230) - (worldScroll * 0.05) % (230 * 8) + 230 * 8) % (230 * 8) - 60;
+    const cy = 30 + (i % 3) * 40;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 20, 0, Math.PI * 2);
+    ctx.arc(cx + 20, cy - 8, 16, 0, Math.PI * 2);
+    ctx.arc(cx + 38, cy, 20, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // labels
+  ctx.fillStyle = '#ffffffaa';
+  ctx.font = '12px monospace';
+  ctx.fillText('\u2192 = Red jump', 10, 18);
+  ctx.fillText('\u2190 = Blue jump', 10, 34);
+}
+
+function update() {
+  animFrame++;
+  speed = BASE_SPEED + distance * 0.0003;
+  distance += speed * 0.1;
+  worldScroll += speed;
+
+  spawnObstacles();
+
+  // Check gap under each ninja, then update physics
+  const redOverGap = !redNinja.dead && isOverGap(redNinja);
+  const blueOverGap = !blueNinja.dead && isOverGap(blueNinja);
+
+  redNinja.update(redOverGap);
+  blueNinja.update(blueOverGap);
+
+  // Block collisions
+  if (!redNinja.dead && hitsBlock(redNinja)) redNinja.die();
+  if (!blueNinja.dead && hitsBlock(blueNinja)) blueNinja.die();
+
+  // Show game over once dead ninja falls off screen
+  if (redNinja.offScreen || blueNinja.offScreen) {
+    gameState = 'over';
+    showGameOver();
+    return;
+  }
+
+  // Cull far-behind obstacles
+  obstacles = obstacles.filter(o => o.screenX() + o.w > -100);
+}
+
+function draw() {
+  drawBackground();
+  drawGround();
+  for (const o of obstacles) o.draw();
+  // Draw blue first (behind), then red (in front)
+  blueNinja.draw();
+  redNinja.draw();
+
+  scoreEl.textContent = 'Distance: ' + Math.floor(distance) + '  |  Best: ' + highScore;
+}
+
+function showGameOver() {
+  const deadName = redNinja.dead ? 'Red' : 'Blue';
+  const finalScore = Math.floor(distance);
+  const isNew = finalScore > highScore;
+  if (isNew) {
+    highScore = finalScore;
+    localStorage.setItem('ninjaRunHighScore', highScore);
+  }
+  overTitle.textContent = 'GAME OVER';
+  overMsg.textContent = deadName + ' ninja fell! Distance: ' + finalScore + (isNew ? ' - NEW BEST!' : '');
+  overSub.textContent = 'Press SPACE or tap to restart';
+  overlay.style.display = 'block';
+}
+
+function handleTap(canvasX) {
+  if (gameState === 'menu' || gameState === 'over') {
+    init();
+    gameState = 'playing';
+    overlay.style.display = 'none';
+    return;
+  }
+  if (gameState !== 'playing') return;
+  if (canvasX < W / 2) {
+    blueNinja.jump();
+  } else {
+    redNinja.jump();
+  }
+}
+
+canvas.addEventListener('mousedown', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const canvasX = (e.clientX - rect.left) * (W / rect.width);
+  handleTap(canvasX);
+});
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  for (const touch of e.changedTouches) {
+    const canvasX = (touch.clientX - rect.left) * (W / rect.width);
+    handleTap(canvasX);
+  }
+}, { passive: false });
+
+function loop() {
+  if (gameState === 'playing') {
+    update();
+    draw();
+  }
+  requestAnimationFrame(loop);
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === ' ' || e.code === 'Space') {
+    e.preventDefault();
+    if (gameState === 'menu' || gameState === 'over') {
+      init();
+      gameState = 'playing';
+      overlay.style.display = 'none';
+    }
+  }
+  if (gameState !== 'playing') return;
+  if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    redNinja.jump();
+  }
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    blueNinja.jump();
+  }
+});
+
+loop();
+</script>
+</body>
+</html>
