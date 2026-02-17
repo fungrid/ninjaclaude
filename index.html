@@ -202,8 +202,9 @@ class Obstacle {
     this.type = type; // 'block' or 'gap'
     this.worldX = worldX;
     if (type === 'block') {
+      this.tall = Math.random() < 0.1;
       this.w = Math.ceil((20 + Math.random() * 15) / 8) * 8;
-      this.h = 25 + Math.random() * 20;
+      this.h = (25 + Math.random() * 20) * (this.tall ? 2 : 1);
     } else {
       this.w = 50 + Math.random() * 40;
       this.h = 0;
@@ -347,8 +348,10 @@ function drawBackground() {
 
   // parallax mountains
   ctx.fillStyle = '#3a5a8a';
-  for (let i = 0; i < 6; i++) {
-    const mx = ((i * 180) - (worldScroll * 0.1) % (180 * 6) + 180 * 6) % (180 * 6) - 90;
+  const mCount = 8;
+  const mTotal = 180 * mCount;
+  for (let i = 0; i < mCount; i++) {
+    const mx = ((i * 180) - (worldScroll * 0.1) % mTotal + mTotal) % mTotal - 180;
     ctx.beginPath();
     ctx.moveTo(mx, GROUND_Y + NINJA_SIZE/2 + 10);
     ctx.lineTo(mx + 90, GROUND_Y - 80 - (i % 3) * 30);
